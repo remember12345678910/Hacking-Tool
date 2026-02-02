@@ -1,3 +1,5 @@
+!apt-get update
+!apt-get install nmap -y
 !pip install python-whois
 !pip install dnspython
 import requests
