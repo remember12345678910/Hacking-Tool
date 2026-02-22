@@ -1,8 +1,3 @@
-print("\n[*] Installing Metasploit Framework...")
-!curl https://raw.githubusercontent.com/rapid7/metasploit-omnibus/master/config/templates/metasploit-framework-wrappers/msfupdate.erb > msfinstall
-!chmod +x msfinstall
-!sudo ./msfinstall
-
 import requests
 import socket
 import whois
@@ -575,7 +570,7 @@ def wifi_audit_mode():
     # 4. Crack
     cap_file_path = f"{capture_file}-01.cap"
     if os.path.exists(cap_file_path):
-        write(f"\n[*] Starting crack attempt on {target['essid']} using {wordlist}...")
+        write(f"\n[*] Starting crack attempt on {target['essid']} using {wordlist}... ")
         crack_cmd = f"sudo aircrack-ng -w {wordlist} -b {target['bssid']} {cap_file_path}"
         crack_proc = subprocess.run(crack_cmd, shell=True, capture_output=True, text=True)
         write(crack_proc.stdout)
@@ -642,7 +637,8 @@ def metasploit_mode():
     except Exception as e:
         write(f"An unexpected error occurred while launching msfconsole: {e}")
         add_confidence(-3)
-        
+
+
 # ================= EXPORT =================
 
 def export_report():
@@ -650,8 +646,8 @@ def export_report():
         print("Nothing to export.")
         return
 
-    name = input("Filename (no extension): ").strip()
-    fmt = input("Format (txt/json): ").lower()
+    name = input("Filename (no extension):").strip()
+    fmt = input("Format (txt/json):").lower()
 
     if not name:
         print("Filename cannot be empty. Aborting export.")
@@ -675,8 +671,44 @@ def export_report():
     except Exception as e:
         print(f"An unexpected error occurred during report export: {e}")
 
+def zphisher_mode():
+    write("\n[ZPHISHER MODE]")
+    write("Launching Zphisher. You will interact with Zphisher directly.")
+    # Change to the zphisher directory
+    zphisher_dir = os.path.join(curdir, "zphisher")
+    if not os.path.isdir(zphisher_dir):
+        write(f"Error: Zphisher directory not found at {zphisher_dir}")
+        add_confidence(-5)
+        return
+
+    original_dir = os.getcwd()
+    try:
+        os.chdir(zphisher_dir)
+        write(f"Changed directory to {os.getcwd()}")
+
+        # Make the script executable if it's not already
+        !chmod +x zphisher.sh
+
+        # Run the zphisher script
+        !./zphisher.sh
+        write("Zphisher session ended.")
+        add_confidence(5)
+    except FileNotFoundError:
+        write("Error: 'zphisher.sh' script not found or dependencies missing. Ensure Zphisher is properly installed.")
+        add_confidence(-5)
+    except subprocess.CalledProcessError as e:
+        write(f"Error running Zphisher: {e.stderr}")
+        add_confidence(-3)
+    except Exception as e:
+        write(f"An unexpected error occurred while launching Zphisher: {e}")
+        add_confidence(-3)
+    finally:
+        os.chdir(original_dir)
+        write(f"Returned to original directory: {os.getcwd()}")
+
 # ================= MENU =================
 
+# Update the menu to include Zphisher
 def menu():
     print("\nOrbit Hacking Tools Made by Ajay Easwarachandran")
     print("1) OSINT Mode")
@@ -685,10 +717,12 @@ def menu():
     print("4) DDoS Mode")
     print("5) Wi-Fi Audit Mode")
     print("6) SQLMap Scan")
-    print("7) Metasploit Mode")
-    print("8) Export Report")
+    print("7) Metasploit")
+    print("8) Phishing Mode") # New option
+    print("9) Export Report")
     print("0) Exit")
 
+# Update the main loop to handle the new option
 while True:
     menu()
     choice = input("Select option: ").strip()
@@ -698,7 +732,7 @@ while True:
         break
 
     # Reset session for new tool modes, but not for export
-    if choice not in ["8", "0"]:
+    if choice not in ["9", "0"]:
         reset_session()
 
     if choice == "1":
@@ -723,11 +757,13 @@ while True:
         ddos_mode()
     elif choice == "5":
         wifi_audit_mode()
-    elif choice == "6": # New SQLMap Scan option
+    elif choice == "6":
         sqlmap_scan()
-    elif choice == "7": # Metasploit Mode
+    elif choice == "7":
         metasploit_mode()
-    elif choice == "8":
+    elif choice == "8": # New Zphisher option
+        zphisher_mode()
+    elif choice == "9": # Export Report option moved to 9
         export_report()
     else:
         write("Invalid option. Choose from the menu dingus.")
